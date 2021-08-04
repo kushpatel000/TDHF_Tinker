@@ -1,0 +1,498 @@
+c
+c     ##################################################################
+c     ##                                                              ##
+c     ##  subroutine cicalc  --  Calculates CI energies and states    ##
+c     ##                                                              ##
+c     ##     Originally written by Bittner(?) for an older version    ##
+c     ##     of Tinker. Rewritten by Kush Patel for Tinker 7.1.2      ##
+c     ##                                                              ##
+c     ##################################################################
+
+      subroutine cicalc
+
+      use sizes
+      use atoms
+      use bndstr
+      use civars
+      use iounit
+      use piorbs
+      use units
+c----------------------------------
+c     to see if TDHF is requested
+      use tdhfvars
+c----------------------------------
+      
+      implicit none
+      
+c     cicalc variables
+c     index variables
+      integer i,j,k,l,m,ma,iip,iorb,jorb,iir
+      integer ih,ie
+      
+      integer nv,nc,nci,nci_max,nl,nu
+c        nv  - num valence orbitals 
+c        nc  - num condunting orbitals
+c        nci - total CI interactions
+c        nci_max - maximum calculated CI interactions
+c        nl  - lower limit (for systems w/ <10 oribtals)
+c        nu  - upper limit (for systems w/ <10 orbitals)
+      parameter(nv = 20, nc = 20, nci_max = nv*nc)
+      integer iconfig(nci_max,2)
+c        keeps track of configurations
+c        (n-9,n+1)
+c        (n-9,n+2)
+c           ...
+c        (n-9,n+10)
+c        (n-8,n+1)
+c           ...
+c        (n,n+10)
+      real*8 hfoc(norbit)
+      real*8 exciton(norbit),tranvect(norbit)
+      real*8 hodens(norbit),eldens(norbit)
+      real*8 nco1(norbit,norbit),nco2(norbit,norbit)
+      real*8 nco3(norbit,norbit),nco4(norbit,norbit)
+      real*8 nhf(norbit),nh(norbit),ne(norbit)
+      real*8 dens(norbit,norbit)
+      
+c     Summation and Integral Variables
+      real*8 qx(nci_max),qy(nci_max),qz(nci_max)
+      real*8 qxsum,qysum,qzsum,Jint,Kint
+      real*8 s1,s2,qtot,fosci,sume,sumh
+      real*8 sum1,sum2,sum3,sum4
+      real*8 sum,p
+
+c     CI Hamiltonian matrices
+      real*8, allocatable :: sing(:,:)
+      real*8, allocatable :: trip(:,:)
+
+c     LAPACK/BLAS work variables
+      real*8, allocatable :: d(:)
+      real*8, allocatable :: work(:)
+      real*8, allocatable :: evec(:,:)
+      integer lwork,info
+c        d    - eigenvalues of CI hamiltonian
+c        work - work variable
+            
+      nl = max(ci_nfill - nv + 1, 1)
+      nu = min(ci_nfill + nc, norbit)
+      nci = (ci_nfill - nl + 1)*(nu - ci_nfill)
+      lwork = 32*nci
+      
+ 307  format(X,A9,I3)
+      write(ciout,307) 'ci_nfill: ', ci_nfill
+      write(ciout,307) 'nl:       ', nl
+      write(ciout,307) 'nu:       ', nu
+      write(ciout,307) 'norbit:   ', norbit
+      write(ciout,307) 'nci:      ', nci
+      write(ciout,*)
+      
+c     Allocate orbitals according to the CI interactions
+      allocate (sing(nci,nci))
+      allocate (trip(nci,nci))
+      allocate (d(nci))
+      allocate (work(lwork))
+      allocate (evec(nci,nci))
+
+c-----Test Print 10/8/16----------
+      write(ciout,*) 'Input Energies (ci_en)'
+      do i=1,norbit
+         write(ciout,*) i, ci_en(i)
+      end do
+c-----End Test Print--------------      
+      
+c     sum over molecular orbitals
+      m = 0
+      do i = nl, ci_nfill
+c      do i = ci_nfill, nl, -1
+         do j=ci_nfill+1, nu
+            m = m+1
+            iconfig(m,1) = i
+            iconfig(m,2) = j
+
+            qxsum = 0.0d0
+            qysum = 0.0d0
+            qzsum = 0.0d0
+c     transitions before CI
+            qx(m) = 0.0d0
+            qy(m) = 0.0d0
+            qz(m) = 0.0d0
+
+            do iip = 1,norbit
+               iorb = iorbit(iip)
+               qxsum = qxsum + ci_v(iip,i)*ci_v(iip,j)*x(iorb)
+               qysum = qysum + ci_v(iip,i)*ci_v(iip,j)*y(iorb)
+               qzsum = qzsum + ci_v(iip,i)*ci_v(iip,j)*z(iorb)
+            end do
+            qx(m) = qxsum
+            qy(m) = qysum
+            qz(m) = qzsum
+
+            ma = 0
+
+c     construct CI Hamiltonian for singlet and triplet
+            do k = nl,ci_nfill
+               do l = ci_nfill+1,nu
+                  ma = ma + 1
+                  Jint = 0.0d0
+                  Kint = 0.0d0
+
+                  do iip=1,norbit
+                     s1 = 0.0d0
+                     s2 = 0.0d0
+                     do iir = 1,norbit
+                        s1 = s1 + ci_gamma(iip,iir)*ci_v(iir,j)*
+     >                       ci_v(iir,l)
+                        s2 = s2 + ci_gamma(iip,iir)*ci_v(iir,k)*
+     >                       ci_v(iir,l)
+                     end do
+                     Jint = Jint + ci_v(iip,i)*ci_v(iip,k)*s1
+                     Kint = Kint + ci_v(iip,i)*ci_v(iip,j)*s2
+                  end do
+                  sing(m,ma) = -Jint + 1.0d0*Kint
+c     Original    sing(m,ma) = -Jint + 2.0d0*Kint
+                  sing(ma,m) = sing(m,ma)
+                  trip(m,ma) = -Jint
+                  trip(ma,m) = -Jint
+               end do
+            end do
+            sing(m,m) = sing(m,m) + (ci_en(j)-ci_en(i))
+            trip(m,m) = trip(m,m) + (ci_en(j)-ci_en(i))
+         end do
+      end do
+c-----Test Print--------
+c     Need to see what all the values in iconfig mean
+      write(ciout,*) "  m     i   j"
+ 999  format(i5,i5,' -> ',i5)
+      do i=1,m
+         write(ciout,999) i, iconfig(i,1), iconfig(i,2)
+      end do
+      write(ciout,*) ''
+c-----End Test Print----
+      
+c
+c     Print the CI Hamiltonians
+c
+ 302  format(E13.5)
+      if(usesinglet) then
+         write(ciout,*) "CI Singlet Hamiltonian"
+         do i=1,nci
+            do j=1,nci
+               write(ciout,302,advance='no') sing(i,j)
+            end do
+            write(ciout,*) ''
+         end do   
+      end if
+      if(usetriplet) then
+         write(ciout,*) "CI Triplet Hamiltonian"
+         do i=1,nci
+            do j=1,nci
+               write(ciout,302,advance='no') trip(i,j)
+            end do
+            write(ciout,*) ''
+         end do
+      end if
+      write(ciout,*)
+c      
+c     Get the eigensystem, print
+c
+      if(usesinglet) then
+         call dsyev('V','U',nci,sing,nci,d,work,lwork,info)
+c     At this point 'sing' holds the eigenvectors
+c     Copy them to 'evec'
+         do i=1,nci
+            do j=1,nci
+               evec(i,j) = sing(i,j)
+            end do
+         end do
+         
+         write(ciout,*) 'CI Singlet Energies (ev)'
+      end if
+      if(usetriplet) then
+         call dsyev('V','U',nci,trip,nci,d,work,lwork,info)
+c     At this point 'trip' holds the eigenvectors
+c     Copy them to 'evec'
+         do i=1,nci
+            do j=1,nci
+               evec(i,j) = trip(i,j)
+            end do
+         end do
+
+         write(ciout,*) 'CI Triplet Energies (ev)'
+      end if
+
+c     Print out the energies
+ 303  format(i5,2f12.6)
+      do i=1,min(20,nci)
+         write(ciout,303) i,d(i)*evolt
+      end do
+      write(ciout,*)
+c
+c     Analyse CI states
+c
+      if(usesinglet) then
+         write(ciout,*) 'Analysis of Singlet States'
+      else if(usetriplet) then
+         write(ciout,*) 'Analysis of Triplet States'
+      end if
+      do i=1,min(20,nci)
+         qxsum = 0.0d0
+         qysum = 0.0d0
+         qzsum = 0.0d0
+
+         do j=1,nci
+            qxsum = qxsum + evec(i,j)*qx(j)
+            qysum = qysum + evec(i,j)*qy(j)
+            qzsum = qzsum + evec(i,j)*qz(j)
+         end do
+
+         qtot = qxsum*qxsum + qysum*qysum + qzsum*qzsum
+         fosci = 0.0875161*qtot*d(i)
+         write(ciout,304) i,d(i)*evolt,fosci
+ 304     format('E(',i2,') = ',f12.6,2x,'fosci = ',f12.6)
+         write(ciout,305) qxsum,qysum,qzsum,sqrt(qtot)
+ 305     format('qx = ',f12.6, 2x, 'qy = ',f12.6, 2x, 'qz = ',f12.6,
+     >        2x,'qtot = ',f12.6)
+               
+         write(ciout,*) 'v -> c          Ec-Ev          coef'
+         do j=1,nci
+            if(evec(i,j)**2.gt.0.1) then
+               write(ciout,'(i3," ->",i3,3x,f12.6,3x,f12.6)')
+     >              iconfig(j,1),iconfig(j,2),
+     >              (ci_en(iconfig(j,2))-ci_en(iconfig(j,1)))*evolt,
+     >              evec(j,i)
+            end if
+         end do
+         write(ciout,*)
+      end do
+c      
+c     Modify electron densitites for excitations.
+c     He were use the assumption that the CI(S)
+c     state add and subtract single electron
+c     density from the ci_ed(i,j) matrix
+c
+c     May need iex here.
+c
+c     First construct the density matrix using
+c     the CI coefficients for iex in MO basis
+c
+      sum1 = 0.0d0
+      do i=1,norbit
+         do j=1,norbit
+            dens(i,j) = 0.0d0
+         end do
+      end do
+
+      do m=1,nci
+         i = iconfig(m,1)
+         j = iconfig(m,2)
+         dens(i,j) = evec(m,iex)
+      end do
+
+ 306  format(8f12.6)
+      write(ciout,*) 'CI expansion coefficients'
+      do i=1,norbit
+            write(ciout,306) (dens(i,j),j=1,norbit)
+      end do
+      write(ciout,*)
+c     At this point, we have the CI density matrix in the local orbital basis.
+c
+c
+c
+c     Now we need to write the populations in the orbital basis. For this, we
+c     first determine the orbital population changes
+c
+      do i=1,norbit
+         nhf(i) = 0.0d0
+         nh(i)  = 0.0d0
+         ne(i)  = 0.0d0
+         if(i.le.ci_nfill) nhf(i) = 2.0d0
+      end do
+
+      do ih = nl,ci_nfill
+         sum = 0.0d0
+         do ie = ci_nfill+1,nu
+            sum = sum + dens(ih,ie)**2
+         end do
+         nh(ih) = sum
+      end do
+      do ie=ci_nfill+1,nu
+         sum = 0.0d0
+         do ih=nl,ci_nfill
+            sum = sum + dens(ih,ie)**2
+         end do
+         ne(ie) = sum
+      end do
+
+
+c     Check: write the occupations over the range nl->nu
+ 308  format(I3,4F13.5)
+      write(ciout,*) "Orbital Populations Post-CI over CI range"
+      write(ciout,*) " k      nhf          nh           ne          adj"
+      do k=nl,nu
+         write(ciout,308) k,nhf(k),nh(k),ne(k),nhf(k)+ne(k)-nh(k)
+      end do
+
+c     This is the CI modified bond-charge matrix
+      do i=1, norbit
+         do j=1, norbit
+            ci_ed(i,j) = 0.0d0
+            sum = 0.0d0
+            do k=1, norbit
+               sum = sum + (nhf(k)+ne(k)-nh(k))*ci_v(i,k)*ci_v(j,k)
+            end do
+            ci_ed(i,j) = sum
+         end do
+      end do
+      write(ciout,*)
+
+
+
+
+c---------------------------------------------------------------------
+c     This is Allen's code here
+c---------------------------------------------------------------------      
+c
+c     create electron and hole in orbital representation
+c
+c      do i=1,norbit
+c         sume = 0.0d0
+c         sumh = 0.0d0
+c         do j=1,norbit
+c            sume = sume + dens(j,i)**2
+c            sumh = sumh + dens(i,j)**2
+c         end do
+c         el(i) = sume
+c         ho(i) = sumh
+c      end do
+c
+c      write(iout,*) 'molecular orbitals'
+c      do i=1,norbit
+c         write(iout,302) (ci_v(i,j),j=1,norbit)
+c      end do
+c
+c      write(iout,*) 'dens(i,j)'
+c      do i=1,norbit
+c         write(iout,302) (dens(i,j),j=1,norbit)
+c      end do
+c
+c      write(iout,*) 'nci = ', nci
+c      write(iout,*) 'nv  = ', nv
+c      write(iout,*) 'nc  = ', nc
+c
+c      do i=1,norbit
+c         sum1 = 0.0d0
+c         do j=1,norbit
+c            do k=1,norbit
+c               sum1 = sum1 + ci_v(i,k)*ci_v(j,k)
+c            end do
+c         end do
+c         hfoc(i) = sum1
+c      end do
+c      sum1 = 0.0d0
+c
+c      write(iout,*) 'hfoc (orbital density?)'
+c      do i=1, norbit
+c         write(iout,*) hfoc(i)
+c      end do
+c
+c      write(iout,*) 'hole orbital'
+c      do i=1,norbit
+c         write(iout,*) ho(i)
+c      end do
+c
+c      write(iout,*) 'electron orbital'
+c      do i=1,norbit
+c         write(iout,*) el(i)
+c      end do
+c
+c      do i=1,norbit
+cc        calc updated density
+c         tranvect(i) = hfoc(i)-ho(i)+el(i)
+cc        calc excition density
+c         exciton(i)  = el(i)-ho(i)
+cc        calc electron density
+c         eldens(i)   = hfoc(i)+el(i)
+cc        calc hole density
+c         hodens(i)   = hfoc(i)-ho(i)
+c      end do
+c
+cc     change the bond charge matrix (tranvect) to from
+cc     orbital represenation to site represenation
+c
+c      do i=1,norbit
+c         do j=1,norbit
+c            sum1 = 0.0d0
+c            sum2 = 0.0d0
+c            sum3 = 0.0d0
+c            sum4 = 0.0d0
+c            do k=1,norbit
+c               sum1 = sum1 + tranvect(k)*ci_v(i,k)*ci_v(j,k)
+c               sum2 = sum2 + exciton(k)*ci_v(i,k)*ci_v(j,k)
+c               sum3 = sum3 + eldens(k)*ci_v(i,k)*ci_v(j,k)
+c               sum4 = sum3 + hodens(k)*ci_v(i,k)*ci_v(j,k)
+c            end do
+c            nco1(i,j) = sum1
+c            nco2(i,j) = sum2
+c            nco3(i,j) = sum3
+c            nco4(i,j) = sum4
+c         end do
+c      end do
+c
+cc     Center of Mass calculations (in some weird way)
+c      sum3 = 0.0d0
+c      sum4 = 0.0d0
+c      do i=1,norbit
+c         sum3 = sum3 + (nco3(i,i)-1)*i
+c         sum4 = sum4 + abs((nco4(i,i)-1)*i)
+c      end do
+c
+c      write(iout,*) 'Center of masses'
+c      write(iout,*) 'Electron: ', sum3
+c      write(iout,*) 'Hole:     ', sum4
+c-----------------------------------------------------------------------
+
+
+c     Print out the CI density/bond-charge matrix
+ 309  format(F13.5)
+      write(ciout,*) 'Density/Bond-Charge Matrix'
+      do i=1,norbit
+         do j=1,norbit
+            write(ciout,309,advance='no') ci_ed(i,j)
+         end do
+         write(ciout,*) ''
+      end do
+      write(ciout,*) ''
+      
+c     As a check, take a look at the changes in the bond-orders.
+c     These will go in to the forcefield calculation next.
+      write(ciout,*) 'bond   i  j  old new'
+      do k=1, nbpi
+         p = pnpl(k)
+         i = ibpi(2,k)
+         j = ibpi(3,k)
+         pnpl(k) = ci_ed(i,j) + realpart(tdhfedb(i,j))
+         i = ibnd(1,ibpi(1,k))
+         j = ibnd(2,ibpi(1,k))
+         write(ciout,'(5i5,2f12.2)') k,ibpi(2,k),ibpi(3,k),i,j,p,pnpl(k)
+      end do
+      write(ciout,*)
+      
+
+c------------------------------------------------------------------------
+c     If needed, update the TDHF electron density matrix
+      if(usetdhf) then
+         write(ciout,*)
+         write(ciout,*) 'Updating TDHF electron density matrix'
+         write(ciout,*)
+         do i=1, norbit
+            do j=1, norbit
+               tdhfeda(i,j) = 0.5d0*ci_ed(i,j)
+c               tdhfedb(i,j) = ci_ed(i,j)               
+            end do
+         end do
+      end if
+c------------------------------------------------------------------------      
+      
+      end subroutine
+
+      
