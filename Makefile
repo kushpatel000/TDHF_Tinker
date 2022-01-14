@@ -33,9 +33,9 @@
 ##  BINDIR       Hard Copies of TINKER Executables
 ##  LINKDIR      Linked Copies of TINKER Executables
 
-TINKERDIR = /home/kush/Tinker_Software/tinker
+TINKERDIR = ~/tinker/.
 BINDIR = $(TINKERDIR)/bin
-LINKDIR = /home/kush/Tinker_Software/tinker/bin
+LINKDIR = $(BINDIR)
 
 ####################################################################
 ##  Known Machine Types; Uncomment One of the Following Sections  ##
@@ -67,7 +67,7 @@ LIBFLAGS = -crusv
 RANLIB = ranlib -c
 LINKFLAGS = $(OPTFLAGS) -static-libgcc
 ## Custom - 05-Jul-21
-LIBS = -L/usr/lib/x86_64-linux-gnu -llapack -lblas -lfftw3 -lfftw3_threads
+LIBS = -llapack -lblas -lfftw3 -lfftw3_threads
 
 
 ##  Machine:  Generic Linux
@@ -730,17 +730,13 @@ EXEFILES = alchemy.x \
 %.x: %.o libtinker.a
 	${F77} ${LINKFLAGS} -o $@ $^ ${LIBS}; strip $@
 
-debug:
-  $(info Debugging)
-
-all:
-	${EXEFILES}
+all: ${EXEFILES}
 
 install:
 	rename
 
 clean:
-	rm -f *.o *.mod *.a *.x
+	rm -vf *.o *.mod *.a *.x *~
 
 listing:
 	cat *.i *.f *.c > tinker.txt
@@ -1394,7 +1390,15 @@ libtinker.a: ${OBJS}
         xyzatm.o \
         zatom.o \
         zclose.o \
-        zcoord.o
+        zcoord.o \
+        tdhfvars.o \
+        tdhfinit.o \
+        pitdrhf.o \
+        pitduhf.o \
+        civars.o \
+        ciinit.o \
+        cicalc.o \
+        fullpi.o
 	${RANLIB} libtinker.a
 
 ###############################################################
@@ -1471,7 +1475,8 @@ distgeom.o: angbnd.o atomid.o atoms.o bndstr.o couple.o disgeo.o files.o inform.
 dma.o:
 document.o: iounit.o
 domega.o:
-dynamic.o: atoms.o bath.o bndstr.o bound.o inform.o iounit.o keys.o mdstuf.o potent.o sizes.o solute.o stodyn.o usage.o
+#dynamic.o: atoms.o bath.o bndstr.o bound.o inform.o iounit.o keys.o mdstuf.o potent.o sizes.o solute.o stodyn.o usage.o 
+dynamic.o: atoms.o bath.o bndstr.o bound.o inform.o iounit.o keys.o mdstuf.o potent.o sizes.o solute.o stodyn.o usage.o civars.o tdhfvars.o
 eangang.o: angang.o angbnd.o angpot.o atoms.o bound.o energi.o group.o math.o sizes.o usage.o
 eangang1.o: angang.o angbnd.o angpot.o atoms.o bound.o deriv.o energi.o group.o math.o sizes.o usage.o virial.o
 eangang2.o: angang.o angbnd.o angpot.o atoms.o bound.o group.o hessn.o math.o sizes.o
@@ -1598,7 +1603,8 @@ fftpack.o: math.o
 field.o: keys.o potent.o
 fields.o:
 files.o:
-final.o: align.o analyz.o angang.o angbnd.o angtor.o atmlst.o bitor.o bndstr.o cell.o charge.o chunks.o couple.o deriv.o dipole.o disgeo.o domega.o faces.o fracs.o freeze.o group.o hessn.o hpmf.o improp.o imptor.o inform.o iounit.o light.o merck.o molcul.o moldyn.o mpole.o mutant.o neigh.o nonpol.o omega.o opbend.o opdist.o orbits.o paths.o pbstuf.o pdb.o piorbs.o pistuf.o pitors.o pme.o polar.o polgrp.o qmstuf.o refer.o restrn.o rgddyn.o rigid.o ring.o rotbnd.o sizes.o socket.o solute.o stodyn.o strbnd.o strtor.o syntrn.o tarray.o tors.o tortor.o uprior.o urey.o usage.o usolve.o vdw.o vibs.o warp.o
+#final.o: align.o analyz.o angang.o angbnd.o angtor.o atmlst.o bitor.o bndstr.o cell.o charge.o chunks.o couple.o deriv.o dipole.o disgeo.o domega.o faces.o fracs.o freeze.o group.o hessn.o hpmf.o improp.o imptor.o inform.o iounit.o light.o merck.o molcul.o moldyn.o mpole.o mutant.o neigh.o nonpol.o omega.o opbend.o opdist.o orbits.o paths.o pbstuf.o pdb.o piorbs.o pistuf.o pitors.o pme.o polar.o polgrp.o qmstuf.o refer.o restrn.o rgddyn.o rigid.o ring.o rotbnd.o sizes.o socket.o solute.o stodyn.o strbnd.o strtor.o syntrn.o tarray.o tors.o tortor.o uprior.o urey.o usage.o usolve.o vdw.o vibs.o warp.o
+final.o: align.o analyz.o angang.o angbnd.o angtor.o atmlst.o bitor.o bndstr.o cell.o charge.o chunks.o couple.o deriv.o dipole.o disgeo.o domega.o faces.o fracs.o freeze.o group.o hessn.o hpmf.o improp.o imptor.o inform.o iounit.o light.o merck.o molcul.o moldyn.o mpole.o mutant.o neigh.o nonpol.o omega.o opbend.o opdist.o orbits.o paths.o pbstuf.o pdb.o piorbs.o pistuf.o pitors.o pme.o polar.o polgrp.o qmstuf.o refer.o restrn.o rgddyn.o rigid.o ring.o rotbnd.o sizes.o socket.o solute.o stodyn.o strbnd.o strtor.o syntrn.o tarray.o tors.o tortor.o uprior.o urey.o usage.o usolve.o vdw.o vibs.o warp.o tdhfvars.o civars.o
 flatten.o: atoms.o fields.o inform.o iounit.o keys.o sizes.o warp.o
 fracs.o:
 freeunit.o: iounit.o
@@ -1921,3 +1927,11 @@ xyzsybyl.o: files.o iounit.o sizes.o titles.o
 zatom.o: angbnd.o atomid.o atoms.o bndstr.o fields.o iounit.o kangs.o katoms.o kbonds.o sizes.o zclose.o zcoord.o
 zclose.o: sizes.o
 zcoord.o: sizes.o
+tdhfvars.o:
+tdhfinit.o: sizes.o keys.o tdhfvars.o
+pitdrhf.o: sizes.o atoms.o atomid.o files.o iounit.o orbits.o piorbs.o bndstr.o units.o tdhfvars.o
+pitduhf.o: sizes.o atoms.o atomid.o files.o iounit.o orbits.o piorbs.o bndstr.o units.o tdhfvars.o
+civars.o:
+ciinit.o: sizes.o keys.o civars.o
+cicalc.o: sizes.o atoms.o bndstr.o civars.o iounit.o piorbs.o units.o
+fullpi.o: sizes.o bndstr.o couple.o inform.o iounit.o piorbs.o tors.o atoms.o
